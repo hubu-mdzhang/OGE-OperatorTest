@@ -198,3 +198,7 @@ resume.bat --run-id 20260812_190528_942
 - 网站 DOM 或 API 契约变化时，先检查 `preflight.json、network.json、trace.zip`，不要改成固定坐标或 PyAutoGUI。
 - 本包自检覆盖 CSV、204/189/15 统计、代码语法、HAR、DAG 绑定、判定、账本、Excel 和跳过证据。真实站点 Smoke Test 仍需在可访问 OGE 且具有登录态的目标 Windows 机器上执行。
 
+## 许可协议
+
+本项目采用 [GNU General Public License v3.0](LICENSE) 协议发布。第三方依赖（Playwright 为 Apache-2.0，openpyxl、pytest 等为 MIT/BSD，均与 GPL-3.0 兼容）按各自许可证由 pip 独立安装，不随本仓库分发。
+
