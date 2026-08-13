@@ -32,6 +32,29 @@ class CodeVerificationError(RuntimeError):
     pass
 
 
+_DROP_INJECT_JS = """
+(code) => {
+  const root = document.querySelector('.monaco-editor[role="code"]');
+  if (!root) return 'no-root';
+  const rect = root.getBoundingClientRect();
+  const dt = new DataTransfer();
+  dt.setData('text/plain', code);
+  const opts = {
+    bubbles: true,
+    cancelable: true,
+    dataTransfer: dt,
+    clientX: rect.left + 120,
+    clientY: rect.top + 80,
+    pageX: rect.left + 120,
+    pageY: rect.top + 80,
+  };
+  root.dispatchEvent(new DragEvent('dragenter', opts));
+  root.dispatchEvent(new DragEvent('dragover', opts));
+  root.dispatchEvent(new DragEvent('drop', opts));
+}
+"""
+
+
 def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
@@ -171,36 +194,73 @@ class OGEDevelopPage:
 
         textarea = self.page.locator(self.sel["editor_textarea"]).filter(visible=True).first
         textarea.wait_for(state="visible")
-        textarea.click()
-        textarea.press("Control+A")
-        textarea.press("Backspace")
-        self.page.keyboard.insert_text(code)
+        self._wait_render_settle()
+        self._focus_editor()
+        self.page.keyboard.press("Control+A")
+        self.page.keyboard.press("Backspace")
+        # 键盘输入(insert_text/type)会触发 Monaco 自动缩进与自动补全括号，改写代码内容；
+        # 粘贴在真实页面上不可用(合成 Ctrl+V 不投递剪贴板)。改为合成拖放注入：
+        # Monaco 的 drop 处理按原文插入，绕过打字管线。
+        self.page.evaluate(_DROP_INJECT_JS, code)
         self.page.wait_for_timeout(300)
-        readback = self._read_monaco_model()
-        if readback.get("ok"):
-            matched = normalize_code(str(readback.get("value") or "")) == normalize_code(code)
-            if not matched:
-                raise CodeVerificationError("textarea 写入后 Monaco 完整代码回读不一致")
-            return "monaco_textarea_keyboard", True
+        # 校验:全选后 textarea 镜像。短代码镜像=全文逐字符比对；
+        # 长代码镜像被 Monaco 截断为 前缀+…+后缀，按省略号切分后分别比对前缀/后缀。
+        # 运行后 executeCode 载荷逐字符比对仍是最终权威。
+        self.page.keyboard.press("Control+A")
+        self.page.wait_for_timeout(200)
+        mirror = textarea.input_value()
+        if not self._mirror_matches(code, mirror):
+            raise CodeVerificationError(
+                "拖放注入后全选镜像与预期代码不一致"
+                f"（镜像长度 {len(mirror)}，开头: {mirror[:80]!r}），拒绝在未验证状态下运行"
+            )
+        return "monaco_drop", True
 
-        # 真实 OGE 页面不暴露 window.monaco：Monaco 虚拟化渲染导致无法一次性全量回读，
-        # 改用渲染区校验：末尾区域必须等于代码后缀，回到顶部后头部区域必须等于代码前缀。
-        # 短代码两端渲染区覆盖全文，等效全量校验；长代码由运行后 executeCode 载荷比对兜底。
-        tail = self._read_rendered_region()
-        if not self._region_matches(code, tail, head=False):
-            raise CodeVerificationError(
-                "键盘注入后编辑器尾部渲染区与预期代码不一致"
-                f"（渲染区长度 {len(tail)}），拒绝在未验证状态下运行"
-            )
-        self.page.keyboard.press("Control+Home")
-        self.page.wait_for_timeout(300)
-        head = self._read_rendered_region()
-        if not self._region_matches(code, head, head=True):
-            raise CodeVerificationError(
-                "键盘注入后编辑器头部渲染区与预期代码不一致"
-                f"（渲染区长度 {len(head)}），拒绝在未验证状态下运行"
-            )
-        return "monaco_textarea_keyboard", True
+    def _wait_render_settle(self, max_wait_ms: int = 8000) -> None:
+        # OGE 页面加载后会异步恢复编辑器上次的代码；若在恢复完成前注入，
+        # 恢复动作会覆盖刚注入的内容。等待渲染区连续两次读取一致视为恢复完成。
+        deadline = time.monotonic() + max_wait_ms / 1000.0
+        last: str | None = None
+        stable = 0
+        while time.monotonic() < deadline:
+            current = self._read_rendered_region()
+            if current == last:
+                stable += 1
+                if stable >= 2:
+                    return
+            else:
+                stable = 0
+                last = current
+            self.page.wait_for_timeout(400)
+
+    def _focus_editor(self) -> None:
+        # 真实页面上直接点击 1x1 隐藏 textarea 的焦点可能落空(实测会跑到 dock-bar)，
+        # 键盘输入随之全部丢失。改为点击编辑器可见区域，并校验焦点确实进入 Monaco textarea。
+        editor_root = self.page.locator(self.sel["editor_root"]).filter(visible=True).first
+        editor_root.wait_for(state="visible")
+        focus_probe = """
+        () => {
+          const a = document.activeElement;
+          return a ? a.tagName + '|' + (a.className || '') : '';
+        }
+        """
+        for _ in range(3):
+            try:
+                editor_root.click(position={"x": 100, "y": 50})
+            except PlaywrightTimeoutError:
+                pass
+            self.page.wait_for_timeout(200)
+            focused = self.page.evaluate(focus_probe)
+            if focused.startswith("TEXTAREA|") and "inputarea" in focused:
+                return
+        try:
+            fallback_textarea = self.page.locator(self.sel["editor_textarea"]).filter(visible=True).first
+            fallback_textarea.click()
+        except PlaywrightTimeoutError:
+            pass
+        focused = self.page.evaluate(focus_probe)
+        if not (focused.startswith("TEXTAREA|") and "inputarea" in focused):
+            raise CodeVerificationError(f"无法将焦点定位到 Monaco 编辑器（当前焦点: {focused}）")
 
     def _read_rendered_region(self) -> str:
         value = self.page.evaluate(
@@ -215,14 +275,19 @@ class OGEDevelopPage:
         return (value or "").replace(" ", " ")
 
     @staticmethod
-    def _region_matches(code: str, region: str, head: bool) -> bool:
-        region_norm = normalize_code(region)
-        if not region_norm:
+    def _mirror_matches(code: str, mirror: str) -> bool:
+        norm_code = normalize_code(code)
+        norm_mirror = normalize_code(mirror)
+        if not norm_mirror:
             return False
-        base = normalize_code(code)
-        if head:
-            return region_norm == base[: len(region_norm)]
-        return region_norm == base[-len(region_norm):]
+        if norm_mirror == norm_code:
+            return True
+        for idx, ch in enumerate(norm_mirror):
+            if ch == "…":
+                left, right = norm_mirror[:idx], norm_mirror[idx + 1 :]
+                if left and right and norm_code.startswith(left) and norm_code.endswith(right):
+                    return True
+        return False
 
     def _run_button(self) -> Locator:
         primary = self.page.locator(self.sel["run_button_primary"]).filter(has_text="运行").filter(visible=True)

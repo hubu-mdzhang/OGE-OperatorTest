@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from pathlib import Path
@@ -13,78 +14,81 @@ sys.path.insert(0, str(ROOT))
 from src.oge_page import OGEDevelopPage
 from src.runner import launch_persistent_context
 
-MARKER = "OGE_PROBE_MARKER_7f3a"
-TEST_CODE = f"# {MARKER}\n" + "\n".join(f"# line {i:03d} test code {'x' * 30}" for i in range(1, 41))
+DROP_EVENT_JS = """
+(code) => {
+  const root = document.querySelector('.monaco-editor[role="code"]');
+  if (!root) return 'no-root';
+  const rect = root.getBoundingClientRect();
+  const dt = new DataTransfer();
+  dt.setData('text/plain', code);
+  const opts = {
+    bubbles: true,
+    cancelable: true,
+    dataTransfer: dt,
+    clientX: rect.left + 120,
+    clientY: rect.top + 80,
+    pageX: rect.left + 120,
+    pageY: rect.top + 80,
+  };
+  root.dispatchEvent(new DragEvent('dragenter', opts));
+  root.dispatchEvent(new DragEvent('dragover', opts));
+  root.dispatchEvent(new DragEvent('drop', opts));
+}
+"""
 
-READ_STATE_JS = """
+READ_MIRROR_JS = """
 () => {
   const root = document.querySelector('.monaco-editor[role="code"]');
   const ta = root ? root.querySelector('textarea.inputarea') : null;
+  return ta ? ta.value : '';
+}
+"""
+
+READ_REGION_JS = """
+() => {
+  const root = document.querySelector('.monaco-editor[role="code"]');
   const view = root ? root.querySelector('.view-lines') : null;
-  const storage = {};
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      const v = localStorage.getItem(k) || '';
-      storage[k] = v.length > 5000 ? v.slice(0, 5000) + '...[TRUNC]' : v;
-    }
-  } catch (e) { storage.error = String(e); }
-  return {
-    textarea: ta ? ta.value : null,
-    viewLines: view ? view.innerText : null,
-    localStorageKeys: Object.keys(localStorage),
-    localStorage: storage,
-  };
+  return (view ? view.innerText : '').replace(/\\u00a0/g, ' ').replace(/\\u200c/g, '');
 }
 """
 
 
 def main() -> None:
+    rows = list(csv.DictReader(open(ROOT / "input" / "operators.csv", encoding="utf-8-sig")))
+    code149 = next(r["code"] for r in rows if int(r["case_id"]) == 149)
+    print(f"149: {len(code149)} 字符")
+
     cfg = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
     with sync_playwright() as playwright:
         context = launch_persistent_context(playwright, cfg, ROOT)
         page = context.pages[0] if context.pages else context.new_page()
         oge = OGEDevelopPage(page, cfg)
-        probe = oge.open()
-        print("工作区契约:", json.dumps(probe, ensure_ascii=False))
+        oge.open()
+        page.wait_for_timeout(3000)
 
-        textarea = page.locator(cfg["selectors"]["editor_textarea"]).filter(visible=True).first
-        textarea.click()
-        page.wait_for_timeout(500)
-        page.keyboard.press("Control+A")
+        editor_root = page.locator(cfg["selectors"]["editor_root"]).filter(visible=True).first
+        editor_root.click(position={"x": 100, "y": 50})
         page.wait_for_timeout(300)
-        original = page.evaluate("() => { const t = document.querySelector('.monaco-editor[role=code] textarea.inputarea'); return t ? t.value : null; }") or ""
-        print(f"originalLen={len(original)}")
+        page.keyboard.press("Control+A")
+        page.keyboard.press("Backspace")
+        page.wait_for_timeout(300)
 
-        print("--- 注入带 MARKER 的 40 行代码 ---")
-        page.keyboard.insert_text(TEST_CODE)
+        page.evaluate(DROP_EVENT_JS, code149)
         page.wait_for_timeout(2000)
 
-        print("--- 检查 localStorage 是否持久化了编辑器代码 ---")
-        state = page.evaluate(READ_STATE_JS)
-        storage_hits = {}
-        for k, v in state["localStorage"].items():
-            if isinstance(v, str) and MARKER in v:
-                storage_hits[k] = {"len": len(v), "exact": v == TEST_CODE}
-        print("localStorage keys:", state["localStorageKeys"])
-        print("包含 MARKER 的 storage:", json.dumps(storage_hits, ensure_ascii=False))
-
-        print("--- 检查 textarea 镜像与 view-lines ---")
-        ta = state["textarea"] or ""
-        vl = (state["viewLines"] or "").replace(" ", " ")
-        lcp = 0
-        for a, b in zip(ta, TEST_CODE):
-            if a == b:
-                lcp += 1
-            else:
-                break
-        print(f"textarea len={len(ta)} lcp_with_code={lcp}")
-        print(f"viewLines len={len(vl)} viewlines_in_code={vl in TEST_CODE}")
-
-        print("--- 还原 ---")
         page.keyboard.press("Control+A")
-        page.keyboard.insert_text(original)
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(400)
+        mirror = page.evaluate(READ_MIRROR_JS) or ""
+        (ROOT / "output" / "probe_149_mirror.txt").write_text(mirror, encoding="utf-8")
+        print(f"mirror len={len(mirror)}")
+        print("mirror head:", repr(mirror[:100]))
+        print("mirror tail:", repr(mirror[-100:]))
+
+        page.keyboard.press("Control+End")
+        page.wait_for_timeout(800)
+        tail = page.evaluate(READ_REGION_JS) or ""
+        (ROOT / "output" / "probe_149_tail.txt").write_text(tail, encoding="utf-8")
+        print(f"tail region len={len(tail)} head: {tail[:80]!r}")
 
         context.close()
 

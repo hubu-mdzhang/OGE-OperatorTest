@@ -8,6 +8,7 @@ __pycache__/
 # ---- IDE ----
 .idea/
 .vscode/
+.claude/
 
 # ---- 运行时敏感数据:登录态、浏览器 Profile、登录验证信息,严禁入库 ----
 runtime/
