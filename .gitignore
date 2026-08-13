@@ -1,0 +1,24 @@
+# ---- Python ----
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+
+# ---- IDE ----
+.idea/
+.vscode/
+
+# ---- 运行时敏感数据:登录态、浏览器 Profile、登录验证信息,严禁入库 ----
+runtime/
+
+# ---- 业务数据与生成物:业务总表 Excel、生成的 CSV/质检报告,不随仓库分发 ----
+input/source/
+input/operators.csv
+input/operators.build_report.json
+
+# ---- 运行产物:批次结果、证据截图、日志 ----
+output/
+
+# ---- 其他 ----
+*.log

@@ -1,0 +1,60 @@
+app:
+  url: "http://www.openearth.org.cn/develop"
+  browser_channel: "msedge"
+  browser_executable_path: null
+  fallback_to_playwright_chromium: false
+  headless: false
+  viewport:
+    width: 1600
+    height: 1000
+  persistent_profile_dir: "runtime/edge-profile"
+  navigation_timeout_ms: 60000
+  action_timeout_ms: 60000
+  # 正式运行不等待人工登录；请先单独运行 login.bat。
+  workspace_wait_ms: 15000
+  operator_timeout_sec: 240
+  network_settle_timeout_sec: 30
+  pre_case_settle_ms: 500
+  render_settle_ms: 1200
+  reload_before_each_case: true
+  max_attempts: 2
+  retry_final_statuses:
+    - "FAIL"
+    - "TIMEOUT"
+
+auth:
+  # login.bat 最长等待 10 分钟，供人工完成账号、验证码或 MFA。
+  interactive_login_timeout_ms: 600000
+  login_url_markers:
+    - "/login"
+    - "/signin"
+    - "/auth"
+  http_status_codes:
+    - 401
+    - 403
+
+selectors:
+  editor_root: '.monaco-editor[role="code"]'
+  editor_textarea: '.monaco-editor textarea.inputarea'
+  run_button_primary: 'div[class*="controlButton_oge_editor_control_btn__"]:has(img[src="/svgs/run.svg"])'
+  run_button_fallback: 'img[src="/svgs/run.svg"]'
+  console_root: 'div[class*="console_oge_console__"]'
+  console_entry: 'div[class*="console_entry__"]'
+  console_content: 'span[class*="console_content__"]'
+  globe_canvas: 'canvas[style*="image-rendering: pixelated"]'
+
+network:
+  execute_code_path: "/api/computation-api/executeCode"
+  execute_dag_path: "/api/computation-api/executeDag"
+
+judging:
+  running_text_contains: "正在执行python代码模版"
+  success_text_contains: "运行成功"
+  require_running_before_success: true
+  screenshot_diff_threshold: 0.01
+
+output:
+  root_dir: "output"
+  report_name: "results.xlsx"
+  save_trace: true
+

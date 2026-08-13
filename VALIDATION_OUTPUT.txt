@@ -1,0 +1,23 @@
+OGE Operator Autotest V2 validation
+Date: 2026-08-12
+
+PASS compileall
+PASS Excel -> CSV
+PASS total_records=204
+PASS executable_records=189
+PASS missing_code_records=15
+PASS duplicate_case_ids=0
+WARN duplicate_operator_names=Feature Model Regress (case_id 173, 182)
+PASS syntax_check=189/189
+PASS HAR executeCode=200
+PASS HAR target_dag_count=3
+PASS HAR target_dag_success=3
+PASS pytest=14 passed
+SKIP browser_e2e=2 (Chromium binary unavailable in build container)
+PASS dry_run_results_jsonl=204
+PASS dry_run_results_csv=204 data rows
+PASS dry_run_results_xlsx=204 result rows
+PASS dry_run_evidence_directories=204
+PASS reconciliation=0
+
+Real OGE authenticated smoke test remains required on the target Windows/Edge host.
